@@ -1,0 +1,32 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/test_audit.sh
+
+  ubuntu-gawk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash scripts/test_audit.sh
+
+  ubuntu-mawk:
+    # pins the mawk case specifically: it's Debian/Ubuntu's default `awk`
+    # and historically the strictest implementation this script touches.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: force mawk as the system awk
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y mawk
+          sudo update-alternatives --set awk /usr/bin/mawk
+          awk --version || true
+      - run: bash scripts/test_audit.sh
