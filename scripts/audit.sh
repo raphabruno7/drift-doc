@@ -1,18 +1,26 @@
 #!/bin/bash
 # Deterministic pre-pass for the drift-doc skill. Pure bash + git + awk/grep/sed
 # (no Python) so the skill has no runtime dependency beyond what a git repo
-# already implies. Mirrors audit.py's classification logic field-for-field;
-# see test_audit.sh for the regression suite both must pass identically.
+# already implies. See test_audit.sh for the regression suite.
+#
+# Style constraint: avoids known span limits in static shell parsers used by
+# skill security scanners (e.g. NVIDIA SkillSpector), so every line of this
+# script gets inspected. Applies to comments too:
+# - command substitutions go in unquoted plain assignments, never quoted
+#   inline as an argument; pass the variable instead.
+# - no literal parentheses or pipe characters inside double-quoted strings;
+#   build those with printf -v.
+# Re-scan after editing: skillspector scan . --no-llm
 set -u
 
 ROOT_ARG="${1:-.}"
-ROOT="$(cd "$ROOT_ARG" 2>/dev/null && pwd -P)"
+ROOT=$(cd "$ROOT_ARG" 2>/dev/null && pwd -P)
 if [ -z "$ROOT" ]; then
   echo '{"error":"root not found"}' >&2
   exit 1
 fi
 
-TMPDIR_DD="$(mktemp -d)"
+TMPDIR_DD=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_DD"' EXIT
 
 IS_GIT_REPO="false"
@@ -40,7 +48,7 @@ find_doc_files() {
     done
     find "$ROOT" \( "${prune[@]}" \) -prune -o -type f -ipath "*/prompts/*.md" -print
   } 2>/dev/null | while IFS= read -r f; do
-    id="$(stat_id "$f")"
+    id=$(stat_id "$f")
     printf '%s\t%s\n' "$id" "$f"
   done | awk -F'\t' '!seen[$1]++ {print $2}' | sort
 }
@@ -55,13 +63,14 @@ fi
 
 resolve_rename_chain() {
   local candidate="$1" current="$1" next found s
-  local seen_list="|$candidate|"
+  local nl=$'\n'
+  local seen_list="${nl}${candidate}${nl}"
   while true; do
-    next="$(awk -F'\t' -v k="$current" '$1==k{print $2; exit}' "$RENAME_MAP")"
+    next=$(awk -F'\t' -v k="$current" '$1==k{print $2; exit}' "$RENAME_MAP")
     [ -z "$next" ] && break
-    case "$seen_list" in *"|$next|"*) break ;; esac
+    case "$seen_list" in *"${nl}${next}${nl}"*) break ;; esac
     current="$next"
-    seen_list="${seen_list}${next}|"
+    seen_list="${seen_list}${next}${nl}"
   done
   printf '%s' "$current"
 }
@@ -70,23 +79,23 @@ resolve_rename_chain() {
 path_history() {
   local candidate="$1"
   local mapped final hist delline sha date
-  mapped="$(awk -F'\t' -v k="$candidate" '$1==k{print $2; exit}' "$RENAME_MAP")"
+  mapped=$(awk -F'\t' -v k="$candidate" '$1==k{print $2; exit}' "$RENAME_MAP")
   if [ -n "$mapped" ]; then
-    final="$(resolve_rename_chain "$candidate")"
+    final=$(resolve_rename_chain "$candidate")
     if [ -e "$ROOT/$final" ]; then
       printf 'renamed\t%s\n' "$final"
       return
     fi
     # renamed but final name also gone -> fall through to deleted check
   fi
-  hist="$(git -C "$ROOT" log --all --diff-filter=AD --name-status -- "$candidate" 2>/dev/null)"
+  hist=$(git -C "$ROOT" log --all --diff-filter=AD --name-status -- "$candidate" 2>/dev/null)
   if [ -z "$hist" ]; then
     printf 'none\n'
     return
   fi
-  delline="$(git -C "$ROOT" log -1 --diff-filter=D --format='%h %ad' --date=short -- "$candidate" 2>/dev/null)"
+  delline=$(git -C "$ROOT" log -1 --diff-filter=D --format='%h %ad' --date=short -- "$candidate" 2>/dev/null)
   if [ -n "$delline" ]; then
-    sha="${delline%% *}"; date="${delline#* }"
+    sha=${delline%% *}; date=${delline#* }
     printf 'deleted\t%s\t%s\n' "$sha" "$date"
   else
     printf 'none\n'
@@ -135,7 +144,7 @@ extract_candidates() {
 # --- header field detection ---------------------------------------------
 is_handoff_doc() {
   local file="$1" base_lower
-  base_lower="$(basename "$file" | tr '[:upper:]' '[:lower:]')"
+  base_lower=$(basename "$file" | tr '[:upper:]' '[:lower:]')
   [ "$base_lower" = "plan.md" ] && { echo true; return; }
   grep -qE '^[[:space:]]*\**[Ss]tatus\**[[:space:]]*:' "$file" && { echo true; return; }
   grep -qi 'next steps' "$file" && { echo true; return; }
@@ -145,13 +154,13 @@ is_handoff_doc() {
 # prints: has_status\thas_owner\thas_last_updated\tlast_updated_value
 header_fields() {
   local file="$1" head40 has_status="false" has_owner="false" has_updated="false" uline updated_val=""
-  head40="$(head -n 40 "$file")"
+  head40=$(head -n 40 "$file")
   grep -qE '^[[:space:]]*\**[Ss]tatus\**[[:space:]]*:' <<< "$head40" && has_status="true"
   grep -qE '^[[:space:]]*\**[Oo]wner\**' <<< "$head40" && has_owner="true"
-  uline="$(grep -iE '^[[:space:]]*\**last[_ -]?updated\**[[:space:]]*:' <<< "$head40" | head -1)"
+  uline=$(grep -iE '^[[:space:]]*\**last[_ -]?updated\**[[:space:]]*:' <<< "$head40" | head -1)
   if [ -n "$uline" ]; then
     has_updated="true"
-    updated_val="$(sed -E 's/^[[:space:]]*\**[Ll]ast[_ -]?[Uu]pdated\**[[:space:]]*:[[:space:]]*//' <<< "$uline")"
+    updated_val=$(sed -E 's/^[[:space:]]*\**[Ll]ast[_ -]?[Uu]pdated\**[[:space:]]*:[[:space:]]*//' <<< "$uline")
   fi
   printf '%s\t%s\t%s\t%s\n' "$has_status" "$has_owner" "$has_updated" "$updated_val"
 }
@@ -164,9 +173,9 @@ check_file() {
   FINDINGS_OUT="$TMPDIR_DD/findings.jsonl"
   : > "$FINDINGS_OUT"
 
-  candidates_raw="$(extract_candidates < "$file")"
+  candidates_raw=$(extract_candidates < "$file")
 
-  local doc_dir; doc_dir="$(dirname "$file")"
+  local doc_dir; doc_dir=$(dirname "$file")
   local line ctx_raw ctx tok
   while IFS=$'\t' read -r tok line ctx_raw; do
     [ -z "$tok" ] && continue
@@ -181,19 +190,21 @@ check_file() {
   if [ "$IS_GIT_REPO" = "true" ] && [ -n "$missing_list" ]; then
     while IFS=$'\t' read -r tok line ctx_raw; do
       [ -z "$tok" ] && continue
-      ctx="$(tr '\001' '\n' <<< "$ctx_raw")"
-      local kind data1 data2
-      IFS=$'\t' read -r kind data1 data2 <<< "$(path_history "$tok")"
+      ctx=$(tr '\001' '\n' <<< "$ctx_raw")
+      local kind data1 data2 hist_line e_tok e_new e_ctx e_ev
+      hist_line=$(path_history "$tok")
+      IFS=$'\t' read -r kind data1 data2 <<< "$hist_line"
+      e_tok=$(json_escape "$tok"); e_ctx=$(json_escape "$ctx")
       case "$kind" in
         renamed)
+          e_new=$(json_escape "$data1"); e_ev=$(json_escape "git-confirmed rename to $data1")
           printf '{"type":"missing_path","directly_verified":true,"old_text":"%s","replacement_text":"%s","line":%s,"context":"%s","evidence":"%s"}\n' \
-            "$(json_escape "$tok")" "$(json_escape "$data1")" "$line" "$(json_escape "$ctx")" \
-            "$(json_escape "git-confirmed rename to $data1")" >> "$FINDINGS_OUT"
+            "$e_tok" "$e_new" "$line" "$e_ctx" "$e_ev" >> "$FINDINGS_OUT"
           ;;
         deleted)
+          printf -v e_ev 'deleted in %s (%s)' "$data1" "$data2"; e_ev=$(json_escape "$e_ev")
           printf '{"type":"missing_path","directly_verified":false,"old_text":"%s","replacement_text":null,"line":%s,"context":"%s","evidence":"%s"}\n' \
-            "$(json_escape "$tok")" "$line" "$(json_escape "$ctx")" \
-            "$(json_escape "deleted in $data1 ($data2)")" >> "$FINDINGS_OUT"
+            "$e_tok" "$line" "$e_ctx" "$e_ev" >> "$FINDINGS_OUT"
           ;;
         *) : ;;  # never tracked -> not a real path reference, drop silently
       esac
@@ -203,27 +214,31 @@ check_file() {
   # doc's own last commit (reused for header suggestion + staleness)
   local last sha="" last_date="" last_updated_ref=""
   if [ "$IS_GIT_REPO" = "true" ]; then
-    last="$(git -C "$ROOT" log -1 --format='%H %ad' --date=short -- "$file" 2>/dev/null)"
+    last=$(git -C "$ROOT" log -1 --format='%H %ad' --date=short -- "$file" 2>/dev/null)
     if [ -n "$last" ]; then
-      sha="${last%% *}"; last_date="${last#* }"
-      last_updated_ref="$last_date (commit ${sha:0:8})"
+      sha=${last%% *}; last_date=${last#* }
+      printf -v last_updated_ref '%s (commit %s)' "$last_date" "${sha:0:8}"
     fi
   fi
 
   # handoff header
-  if [ "$(is_handoff_doc "$file")" = "true" ]; then
-    local hs ho hu uv
-    IFS=$'\t' read -r hs ho hu uv <<< "$(header_fields "$file")"
+  local handoff; handoff=$(is_handoff_doc "$file")
+  if [ "$handoff" = "true" ]; then
+    local hs ho hu uv fields e_val
+    fields=$(header_fields "$file")
+    IFS=$'\t' read -r hs ho hu uv <<< "$fields"
     local missing_count=0
     [ "$hs" = "false" ] && missing_count=$((missing_count + 1))
     [ "$ho" = "false" ] && missing_count=$((missing_count + 1))
     [ "$hu" = "false" ] && missing_count=$((missing_count + 1))
 
     if [ "$missing_count" -eq 3 ]; then
-      local block
-      block="Status: [fill in — e.g. in-progress / blocked / done]"$'\n'"Last updated: ${last_updated_ref:-[fill in]}"$'\n'"Owner/context: [fill in]"
+      local block e_block
+      local lu=$last_updated_ref; [ -z "$lu" ] && lu='[fill in]'
+      printf -v block 'Status: [fill in — e.g. in-progress / blocked / done]\nLast updated: %s\nOwner/context: [fill in]' "$lu"
+      e_block=$(json_escape "$block")
       printf '{"type":"missing_header","directly_verified":false,"suggested_block":"%s","evidence":"%s"}\n' \
-        "$(json_escape "$block")" "no Status/Owner/Last updated fields found in first 40 lines" >> "$FINDINGS_OUT"
+        "$e_block" "no Status/Owner/Last updated fields found in first 40 lines" >> "$FINDINGS_OUT"
     else
       if [ "$hs" = "false" ]; then
         printf '{"type":"missing_header_field","directly_verified":false,"field":"Status","suggested_value":null,"evidence":"field absent from first 40 lines"}\n' >> "$FINDINGS_OUT"
@@ -233,8 +248,9 @@ check_file() {
       fi
       if [ "$hu" = "false" ]; then
         if [ -n "$last_updated_ref" ]; then
+          e_val=$(json_escape "$last_updated_ref")
           printf '{"type":"missing_header_field","directly_verified":false,"field":"Last updated","suggested_value":"%s","evidence":"field absent from first 40 lines"}\n' \
-            "$(json_escape "$last_updated_ref")" >> "$FINDINGS_OUT"
+            "$e_val" >> "$FINDINGS_OUT"
         else
           printf '{"type":"missing_header_field","directly_verified":false,"field":"Last updated","suggested_value":null,"evidence":"field absent from first 40 lines"}\n' >> "$FINDINGS_OUT"
         fi
@@ -244,30 +260,33 @@ check_file() {
 
   # staleness pressure: scoped to referenced paths that exist; skip if doc is dirty
   if [ "$IS_GIT_REPO" = "true" ] && [ -n "$sha" ]; then
-    local dirty; dirty="$(git -C "$ROOT" status --porcelain -- "$file" 2>/dev/null)"
+    local dirty; dirty=$(git -C "$ROOT" status --porcelain -- "$file" 2>/dev/null)
     if [ -z "$dirty" ]; then
       local -a scope=()
       if [ -n "$existing_list" ]; then
-        while IFS= read -r p; do [ -n "$p" ] && scope+=("$p"); done <<< "$(sort -u <<< "$existing_list")"
+        local uniq_existing; uniq_existing=$(sort -u <<< "$existing_list")
+        while IFS= read -r p; do [ -n "$p" ] && scope+=("$p"); done <<< "$uniq_existing"
       else
-        local parent_rel; parent_rel="$(dirname "$rel")"
+        local parent_rel; parent_rel=$(dirname "$rel")
         [ "$parent_rel" != "." ] && scope=("$parent_rel")
       fi
       if [ "${#scope[@]}" -gt 0 ]; then
         local commits_since
-        commits_since="$(git -C "$ROOT" rev-list --count "${sha}..HEAD" -- "${scope[@]}" 2>/dev/null)"
+        commits_since=$(git -C "$ROOT" rev-list --count "${sha}..HEAD" -- "${scope[@]}" 2>/dev/null)
         if [ -n "$commits_since" ] && [ "$commits_since" -gt 0 ] 2>/dev/null; then
-          local recent recent_json="[" first=1 ln
-          recent="$(git -C "$ROOT" log --oneline "${sha}..HEAD" -5 -- "${scope[@]}" 2>/dev/null)"
+          local recent recent_json="[" first=1 ln e_ln e_date
+          recent=$(git -C "$ROOT" log --oneline "${sha}..HEAD" -5 -- "${scope[@]}" 2>/dev/null)
           while IFS= read -r ln; do
             [ -z "$ln" ] && continue
             [ "$first" -eq 0 ] && recent_json="${recent_json},"
-            recent_json="${recent_json}\"$(json_escape "$ln")\""
+            e_ln=$(json_escape "$ln")
+            recent_json="${recent_json}\"${e_ln}\""
             first=0
           done <<< "$recent"
           recent_json="${recent_json}]"
+          e_date=$(json_escape "$last_date")
           printf '{"type":"staleness_pressure","directly_verified":false,"doc_last_commit_date":"%s","commits_since_in_same_dir":%s,"sample_recent_commits":%s}\n' \
-            "$(json_escape "$last_date")" "$commits_since" "$recent_json" >> "$FINDINGS_OUT"
+            "$e_date" "$commits_since" "$recent_json" >> "$FINDINGS_OUT"
         fi
       fi
     fi
@@ -286,19 +305,21 @@ WITH_FINDINGS=0
 while IFS= read -r f; do
   [ -z "$f" ] && continue
   check_file "$f"
-  count="$(wc -l < "$FINDINGS_OUT" | tr -d ' ')"
+  count=$(wc -l < "$FINDINGS_OUT" | tr -d ' ')
   if [ "$count" -gt 0 ]; then
     WITH_FINDINGS=$((WITH_FINDINGS + 1))
     rel="${f#"$ROOT"/}"
-    findings_arr="$(paste -sd',' "$FINDINGS_OUT")"
-    printf '{"file":"%s","findings":[%s]}\n' "$(json_escape "$rel")" "$findings_arr" >> "$RESULTS_JSON"
+    findings_arr=$(paste -sd',' "$FINDINGS_OUT")
+    e_rel=$(json_escape "$rel")
+    printf '{"file":"%s","findings":[%s]}\n' "$e_rel" "$findings_arr" >> "$RESULTS_JSON"
   fi
 done < "$DOCS_LIST"
 
 CLEAN_COUNT=$((DOCS_SCANNED - WITH_FINDINGS))
-DOCS_JSON="$(paste -sd',' "$RESULTS_JSON")"
+DOCS_JSON=$(paste -sd',' "$RESULTS_JSON")
 
-OUT="{\"root\":\"$(json_escape "$ROOT")\",\"is_git_repo\":${IS_GIT_REPO},\"documents_scanned\":${DOCS_SCANNED},\"clean_count\":${CLEAN_COUNT},\"documents_with_findings\":[${DOCS_JSON}]"
+E_ROOT=$(json_escape "$ROOT")
+OUT="{\"root\":\"${E_ROOT}\",\"is_git_repo\":${IS_GIT_REPO},\"documents_scanned\":${DOCS_SCANNED},\"clean_count\":${CLEAN_COUNT},\"documents_with_findings\":[${DOCS_JSON}]"
 if [ "$IS_GIT_REPO" = "false" ]; then
   OUT="${OUT},\"note\":\"not a git repo: path-history and staleness checks were skipped, not passed — clean_count does not mean verified clean\""
 fi

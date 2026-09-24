@@ -12,12 +12,12 @@ Audit project state-documentation files against verifiable evidence from the rep
 ## Modes
 
 - **Review mode (default).** Report + diffs, nothing written until approved.
-- **Auto mode.** Only when explicitly requested (e.g. "auto mode", "atualiza automaticamente", "sync the docs directly"). See `references/judgment.md` for exactly what it may write without asking.
+- **Auto mode.** Only when explicitly requested (e.g. "auto mode", "atualiza automaticamente", "sync the docs directly"). See `references/judgment.md` for exactly what it may write once the user has opted in.
 
 ## Scope lock
 
 Only read and propose edits to documentation/instruction files:
-- `CLAUDE.md`, `AGENTS.md`, `PLAN.md` (any location, any case variant)
+- Files named CLAUDE.md, AGENTS.md or PLAN.md (any location, any case variant)
 - README files that document a skill, agent, or workflow
 - Agent/system-prompt files (e.g. `**/prompts/*.md`, `**/system_prompt*`)
 

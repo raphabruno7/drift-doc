@@ -21,7 +21,7 @@ Judging a finding (below) can conclude one of two ways: it needs an edit, or it 
 ## Applying edits per mode
 
 - **Review mode:** never apply edits automatically. Present the full report and diffs, then ask which findings to apply. Only write changes that are explicitly approved, one file at a time.
-- **Auto mode:** apply only findings that carry ready-made replacement text (renamed-path findings) without asking. Everything else — deleted paths with no replacement, header fields, staleness pressure — still gets asked about, even in auto mode. Print a combined report afterward: what was auto-applied vs. what still needs a decision.
+- **Auto mode:** apply only findings that carry ready-made replacement text (renamed-path findings) directly — the user opted in by requesting auto mode. Everything else — deleted paths with no replacement, header fields, staleness pressure — still gets asked about, even in auto mode. Print a combined report afterward: what was auto-applied vs. what still needs a decision.
 - In both modes: never commit or push as part of this skill.
 
 ## Actually writing an approved edit

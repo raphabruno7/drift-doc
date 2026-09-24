@@ -20,7 +20,7 @@ It never rewrites docs outright and never invents what changed. A deterministic 
 ## Modes
 
 - **Review mode (default).** Reports findings with diffs; nothing is written until you approve each one.
-- **Auto mode.** Only when you explicitly ask for it (e.g. "auto mode", "sync the docs directly"). Even then, only findings that carry ready-made replacement text (confirmed renames) are applied without asking — everything else still requires a decision.
+- **Auto mode.** Only when you explicitly ask for it (e.g. "auto mode", "sync the docs directly"). Even then, only findings that carry ready-made replacement text (confirmed renames) are applied directly, because asking for auto mode is your opt-in — everything else still requires a decision.
 
 ## Requirements
 

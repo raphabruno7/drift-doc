@@ -18,13 +18,14 @@ git clone https://github.com/raphabruno7/drift-doc.git ~/.claude/skills/drift-do
 git clone https://github.com/raphabruno7/drift-doc.git .claude/skills/drift-doc
 ```
 
-If you'd rather not keep the `.git` history inside your skills folder, clone it elsewhere and copy the contents instead:
+If you'd rather not keep the `.git` history inside your skills folder, export a clean copy instead:
 
 ```bash
 git clone https://github.com/raphabruno7/drift-doc.git /tmp/drift-doc
-cp -r /tmp/drift-doc ~/.claude/skills/drift-doc
-rm -rf /tmp/drift-doc/.git
+git -C /tmp/drift-doc archive --prefix=drift-doc/ HEAD | tar -x -C ~/.claude/skills
 ```
+
+(`tar -C` needs `~/.claude/skills` to exist already; it does once you have any personal skill installed.)
 
 ## 2. Verify it's picked up
 
@@ -62,8 +63,4 @@ git pull
 
 ## Uninstalling
 
-Delete the skill directory:
-
-```bash
-rm -rf ~/.claude/skills/drift-doc
-```
+Delete the `~/.claude/skills/drift-doc` folder (or `.claude/skills/drift-doc` for a project install).
