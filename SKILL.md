@@ -27,7 +27,7 @@ Never edit source code as part of this skill. If the audit surfaces a source-cod
 
 1. **Run the deterministic pre-pass first, always.** Execute `scripts/audit.sh <project_root>` (defaults to cwd; pure bash + git/awk/grep, no runtime dependency beyond what a git repo already implies). It finds the state documents and checks them against git/filesystem — do not re-discover documents or re-run these checks by hand.
 
-2. **If `documents_with_findings` is empty:** report clean and stop — unless `is_git_repo` is `false`, in which case say path-history and staleness checks were skipped (not that the docs are clean).
+2. **If `documents_with_findings` is empty:** report in one line that no broken paths, missing handoff headers or staleness signals were found, and stop. Never say the docs are "up to date" or "accurate": the pre-pass does not check prose claims (project name, version, domain), so a clean result is not a content check. If `is_git_repo` is `false`, say instead that path-history and staleness checks were skipped.
 
 3. **If there are findings, read `references/judgment.md` before acting on any of them.** It has the write-safety rule and the per-finding-type judgment guidance — don't skip it, and don't improvise judgment it already covers.
 
@@ -38,7 +38,7 @@ Never edit source code as part of this skill. If the audit surfaces a source-cod
    ```
    Open with `<N> finding(s)` (N = findings surviving judgment), nothing else on that line, no emoji, no color markup. Then bullet (`●`) + plain filename (no bold, no other markup) per line. No headers, no justification, no old→new text, no line numbers. End with "Which one should I apply?" when N=1, or "Which ones should I apply?" when N>1, followed by "(ask for an item's diff to see the exact text before approving)." Show the actual diff for an item only when the user asks for it, at approval time — compute it then from the finding's `line`/`context` fields (see `references/judgment.md`), never by `Read`-ing the full document. Write this report and every other message in whatever language the conversation is already in — nothing here is meant to force English on a non-English user.
 
-   If judgment in step 3 concludes a finding doesn't actually need a change (false positive, already fixed, not real drift), drop it silently — do not list it, do not explain why, not even a one-line count. If the script returned findings but step 3 drops every single one, output one line ("No update needed.") and stop.
+   If judgment in step 3 concludes a finding doesn't actually need a change (false positive, already fixed, not real drift), drop it silently — do not list it, do not explain why, not even a one-line count. If the script returned findings but step 3 drops every single one, output one line ("No update needed for the flagged items.") and stop.
 
    Apply edits per the active mode as `references/judgment.md` describes.
 

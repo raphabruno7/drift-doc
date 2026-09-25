@@ -149,6 +149,48 @@ got=$(field "$out" is_git_repo); check "non_git_is_git_repo_false" "false" "$got
 got=$(count "$out" '"note"'); check "non_git_note" "1" "$got"
 rm -rf "$d"
 
+# 11: leading-slash path is repo-root relative; staleness still fires
+d=$(new_repo)
+printf 'Project notes referencing `/src/x.py`.\n' > "$d/CLAUDE.md"
+mkdir -p "$d/src"; echo x > "$d/src/x.py"
+git -C "$d" add -A; git -C "$d" commit -qm init
+echo "x changed" > "$d/src/x.py"
+git -C "$d" add -A; git -C "$d" commit -qm "change x"
+out=$("$AUDIT" "$d")
+got=$(count "$out" '"type":"staleness_pressure"'); check "leading_slash_staleness" "1" "$got"
+rm -rf "$d"
+
+# 12: markdown link to a deleted file is a finding, old_text as written
+d=$(new_repo)
+mkdir -p "$d/docs"; echo gone > "$d/docs/gone.md"
+git -C "$d" add -A; git -C "$d" commit -qm init
+git -C "$d/docs" rm -q gone.md; git -C "$d" commit -qm "delete gone"
+printf 'Status: done\nOwner: x\nLast updated: 2020-01-01\n\nSee [the doc](./docs/gone.md#intro).\n' > "$d/PLAN.md"
+git -C "$d" add -A; git -C "$d" commit -qm plan
+out=$("$AUDIT" "$d")
+got=$(field "$out" old_text); check "md_link_deleted_old_text" "./docs/gone.md" "$got"
+got=$(field "$out" replacement_text); check "md_link_deleted_no_replacement" "null" "$got"
+rm -rf "$d"
+
+# 13: markdown link to a renamed file keeps the doc's prefix in the replacement
+d=$(new_repo)
+mkdir -p "$d/src"; echo "content long enough for git similarity detection to work" > "$d/src/a.py"
+git -C "$d" add -A; git -C "$d" commit -qm init
+git -C "$d" mv src/a.py src/b.py; git -C "$d" commit -qm rename
+printf 'Status: done\nOwner: x\nLast updated: 2020-01-01\n\n![img](/src/a.py)\n' > "$d/PLAN.md"
+git -C "$d" add -A; git -C "$d" commit -qm plan
+out=$("$AUDIT" "$d")
+got=$(field "$out" replacement_text); check "md_link_renamed" "/src/b.py" "$got"
+rm -rf "$d"
+
+# 14: URLs, mailto and pure anchors in links are not findings
+d=$(new_repo)
+printf 'Status: done\nOwner: x\nLast updated: 2020-01-01\n\n[a](https://x.io/y.md) [b](mailto:a@b.co) [c](#top)\n' > "$d/PLAN.md"
+git -C "$d" add -A; git -C "$d" commit -qm plan
+out=$("$AUDIT" "$d")
+got=$(empty_findings "$out" && echo yes); check "md_link_urls_ignored" "yes" "$got"
+rm -rf "$d"
+
 echo ""
 TOTAL=$((PASS + FAIL))
 echo "$PASS/$TOTAL passed"

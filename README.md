@@ -6,7 +6,8 @@ It never rewrites docs outright and never invents what changed. A deterministic 
 
 ## What it catches
 
-- **Renamed/deleted paths** — a doc references `old/path.md`, but git history shows it was renamed or deleted.
+- **Renamed/deleted paths** — a doc references `old/path.md` (in backticks or as a markdown link target), but git history shows it was renamed or deleted.
+- **Identity drift** — when a doc shows staleness, its project name, version and repo/site URL are checked against the manifest (`package.json` etc.).
 - **Missing handoff headers** — `PLAN.md`-style docs missing `Status` / `Owner` / `Last updated` fields.
 - **Staleness pressure** — the doc hasn't been touched in a while, but the code/files it describes have changed since.
 

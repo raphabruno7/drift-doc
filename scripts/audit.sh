@@ -105,25 +105,34 @@ path_history() {
 # --- per-line candidate extraction (awk: first occurrence + context) ---
 extract_candidates() {
   # stdin = file content; emits tok\tline\tcontext(\001-joined, POSIX octal not hex — mawk lacks \x) for path-shaped
-  # backtick tokens that are not URLs and not glob patterns.
+  # backtick tokens and markdown link targets that are not URLs and not glob patterns.
   awk '
+    function consider(tok, i) {
+      if (tok ~ /^https?:\/\//) return
+      if (tok ~ /[*?\[]/) return
+      if (!(tok ~ /\// || tok ~ /\.[A-Za-z0-9_]+$/)) return
+      if (tok in seen) return
+      seen[tok] = 1
+      order[++cnt] = tok
+      linenum[tok] = i
+    }
     { lines[NR] = $0 }
     END {
       n = NR
       for (i = 1; i <= n; i++) {
         s = lines[i]
         while (match(s, /`[^`[:space:]]+`/)) {
-          tok = substr(s, RSTART + 1, RLENGTH - 2)
+          consider(substr(s, RSTART + 1, RLENGTH - 2), i)
           s = substr(s, RSTART + RLENGTH)
-          if (tok ~ /^https?:\/\//) continue
-          if (tok ~ /[*?\[]/) continue
-          has_slash = (tok ~ /\//)
-          has_ext = (tok ~ /\.[A-Za-z0-9_]+$/)
-          if (!(has_slash || has_ext)) continue
-          if (tok in seen) continue
-          seen[tok] = 1
-          order[++cnt] = tok
-          linenum[tok] = i
+        }
+        # markdown link/image targets: ](target) — fragment dropped, schemes skipped
+        s = lines[i]
+        while (match(s, /\]\([^)[:space:]]+/)) {
+          tok = substr(s, RSTART + 2, RLENGTH - 2)
+          s = substr(s, RSTART + RLENGTH)
+          sub(/#.*/, "", tok)
+          if (tok == "" || tok ~ /^[A-Za-z][A-Za-z0-9+.-]*:/) continue
+          consider(tok, i)
         }
       }
       for (k = 1; k <= cnt; k++) {
@@ -176,11 +185,14 @@ check_file() {
   candidates_raw=$(extract_candidates < "$file")
 
   local doc_dir; doc_dir=$(dirname "$file")
-  local line ctx_raw ctx tok
+  local line ctx_raw ctx tok p pre
+  # p = tok with a leading ./ or / removed, the form git and the filesystem
+  # accept; tok itself stays verbatim as old_text so the diff matches the doc.
   while IFS=$'\t' read -r tok line ctx_raw; do
     [ -z "$tok" ] && continue
-    if [ -e "$doc_dir/$tok" ] || [ -e "$ROOT/$tok" ]; then
-      existing_list="${existing_list}${tok}"$'\n'
+    p=${tok#./}; p=${p#/}
+    if [ -e "$doc_dir/$p" ] || [ -e "$ROOT/$p" ]; then
+      existing_list="${existing_list}${p}"$'\n'
     else
       missing_list="${missing_list}${tok}"$'\t'"${line}"$'\t'"${ctx_raw}"$'\n'
     fi
@@ -192,12 +204,13 @@ check_file() {
       [ -z "$tok" ] && continue
       ctx=$(tr '\001' '\n' <<< "$ctx_raw")
       local kind data1 data2 hist_line e_tok e_new e_ctx e_ev
-      hist_line=$(path_history "$tok")
+      p=${tok#./}; p=${p#/}; pre=${tok%"$p"}
+      hist_line=$(path_history "$p")
       IFS=$'\t' read -r kind data1 data2 <<< "$hist_line"
       e_tok=$(json_escape "$tok"); e_ctx=$(json_escape "$ctx")
       case "$kind" in
         renamed)
-          e_new=$(json_escape "$data1"); e_ev=$(json_escape "git-confirmed rename to $data1")
+          e_new=$(json_escape "$pre$data1"); e_ev=$(json_escape "git-confirmed rename to $data1")
           printf '{"type":"missing_path","directly_verified":true,"old_text":"%s","replacement_text":"%s","line":%s,"context":"%s","evidence":"%s"}\n' \
             "$e_tok" "$e_new" "$line" "$e_ctx" "$e_ev" >> "$FINDINGS_OUT"
           ;;
