@@ -32,7 +32,9 @@ json_escape() {
 }
 
 stat_id() {
-  stat -f '%d:%i' "$1" 2>/dev/null || stat -c '%d:%i' "$1" 2>/dev/null
+  # GNU first: GNU stat -f means file-system status and prints multi-line junk
+  # before failing, while BSD stat -c fails cleanly with nothing on stdout
+  stat -c '%d:%i' "$1" 2>/dev/null || stat -f '%d:%i' "$1" 2>/dev/null
 }
 
 # --- doc discovery -----------------------------------------------------
@@ -365,7 +367,7 @@ check_file() {
 # --- main ------------------------------------------------------------------
 DOCS_LIST="$TMPDIR_DD/docs.txt"
 find_doc_files > "$DOCS_LIST"
-DOCS_SCANNED=$(wc -l < "$DOCS_LIST" | tr -d ' ')
+DOCS_SCANNED=$(grep -c . "$DOCS_LIST")
 
 RESULTS_JSON="$TMPDIR_DD/results.jsonl"
 : > "$RESULTS_JSON"
