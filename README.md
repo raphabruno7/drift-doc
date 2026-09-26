@@ -20,7 +20,7 @@ It never rewrites docs outright and never invents what changed. A deterministic 
 
 ## Known limit
 
-It checks paths, links, handoff headers, staleness and identity (name/version/URL) deterministically, then judges only what those checks point at — it does not read every doc end to end. Prose claims about features or setup (e.g. "password reset, if available", "`/content` is a git submodule") can slip through. On a hand-verified benchmark — the same 3 repos (2 runs each) used while developing these checks, so an in-sample figure — it found 82% of the real drift that an unrestricted Claude Code audit found, at about one sixth of the cost per real finding.
+It checks paths, links, handoff headers, staleness and identity (name/version/URL) deterministically, then judges only what those checks point at — it does not read every doc end to end. Prose claims about features or setup (e.g. "password reset, if available", "`/content` is a git submodule") can slip through.
 
 ## Modes
 
