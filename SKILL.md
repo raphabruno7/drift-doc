@@ -1,13 +1,13 @@
 ---
 name: drift-doc
-description: This skill should be used when auditing whether a project's state documentation (CLAUDE.md, PLAN.md, AGENTS.md, README files describing skills/agents, and agent system-prompt files such as those for voice or conversation agents) still matches the current state of the codebase. Trigger it when the user asks to check, update, or sync project documentation, when starting work on a task handoff, or when the user mentions that CLAUDE.md, PLAN.md, AGENTS.md, or an agent prompt file seems stale or out of date. Runs in review mode by default (report + diffs, nothing written until approved); runs in auto mode — applying findings directly without per-diff approval — only when the user explicitly asks for auto mode, automatic sync, or says to update the docs directly.
+description: This skill should be used when auditing whether a project's state documentation (CLAUDE.md, PLAN.md, AGENTS.md, README files describing skills/agents, and agent system-prompt files such as those for voice or conversation agents) still matches the current state of the codebase. Trigger it when the user asks to check, update, or sync project documentation, after landing a chunk of work (a feature, refactor or fix) to keep those docs current, when starting work on a task handoff, or when the user mentions that CLAUDE.md, PLAN.md, AGENTS.md, or an agent prompt file seems stale or out of date. Runs in review mode by default (report + diffs, nothing written until approved); runs in auto mode — applying findings directly without per-diff approval — only when the user explicitly asks for auto mode, automatic sync, or says to update the docs directly.
 ---
 
 # Drift Doc
 
 ## Overview
 
-Audit project state-documentation files against verifiable evidence from the repository and report concrete divergences with proposed diffs. Never rewrite documentation outright and never fabricate what changed.
+Keep the docs an agent (or whoever picks up the work) reads to understand the project current as the work moves forward: audit them against verifiable evidence from the repository and report concrete divergences with proposed diffs. Never rewrite documentation outright and never fabricate what changed.
 
 ## Modes
 
@@ -18,7 +18,7 @@ Audit project state-documentation files against verifiable evidence from the rep
 
 Only read and propose edits to documentation/instruction files:
 - Files named CLAUDE.md, AGENTS.md or PLAN.md (any location, any case variant)
-- README files that document a skill, agent, or workflow
+- README files that document a skill, agent or prompt (inside `skills/`, `agents/`, `prompts/`, or next to a `SKILL.md`) — not a project's product README
 - Agent/system-prompt files (e.g. `**/prompts/*.md`, `**/system_prompt*`)
 
 Never edit source code as part of this skill. If the audit surfaces a source-code bug or TODO, mention it as a note, not as a proposed edit.

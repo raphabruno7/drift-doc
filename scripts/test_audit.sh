@@ -73,7 +73,7 @@ d=$(new_repo)
 mkdir -p "$d/src"; echo "content long enough for git similarity detection to work" > "$d/src/a.py"
 git -C "$d" add -A; git -C "$d" commit -qm init
 git -C "$d" mv src/a.py src/b.py; git -C "$d" commit -qm rename
-git -C "$d/src" rm -q b.py; git -C "$d" commit -qm "delete final"
+git -C "$d/src" rm -q b.py; git -C "$d" commit -qm "rm final"
 printf 'Status: done\nOwner: x\nLast updated: 2020-01-01\n\nSee `src/a.py`.\n' > "$d/PLAN.md"
 git -C "$d" add -A; git -C "$d" commit -qm plan
 out=$("$AUDIT" "$d")
@@ -164,7 +164,7 @@ rm -rf "$d"
 d=$(new_repo)
 mkdir -p "$d/docs"; echo gone > "$d/docs/gone.md"
 git -C "$d" add -A; git -C "$d" commit -qm init
-git -C "$d/docs" rm -q gone.md; git -C "$d" commit -qm "delete gone"
+git -C "$d/docs" rm -q gone.md; git -C "$d" commit -qm "rm gone"
 printf 'Status: done\nOwner: x\nLast updated: 2020-01-01\n\nSee [the doc](./docs/gone.md#intro).\n' > "$d/PLAN.md"
 git -C "$d" add -A; git -C "$d" commit -qm plan
 out=$("$AUDIT" "$d")
@@ -210,7 +210,12 @@ rm -rf "$d"
 
 # 17: staleness finding carries manifest identity and the doc's identity lines
 d=$(new_repo)
-printf '{\n  "name": "new-name",\n  "version": "2.0.0"\n}\n' > "$d/package.json"
+cat > "$d/package.json" <<'JSON'
+{
+  "name": "new-name",
+  "version": "2.0.0"
+}
+JSON
 printf '# old-name\n\nVersion 1.0. Code in `src/x.py`.\n' > "$d/CLAUDE.md"
 mkdir -p "$d/src"; echo x > "$d/src/x.py"
 git -C "$d" add -A; git -C "$d" commit -qm init
@@ -224,7 +229,12 @@ rm -rf "$d"
 
 # 18: truncated identity lines stay valid UTF-8 even when the cut lands mid-character
 d=$(new_repo)
-printf '{\n  "name": "n",\n  "version": "1.0.0"\n}\n' > "$d/package.json"
+cat > "$d/package.json" <<'JSON'
+{
+  "name": "n",
+  "version": "1.0.0"
+}
+JSON
 long=$(printf 'ação%.0s' $(seq 1 60))
 printf '# t\n\nVersão 1.0 %s\n\nCode in `src/x.py`.\n' "$long" > "$d/CLAUDE.md"
 mkdir -p "$d/src"; echo x > "$d/src/x.py"
@@ -233,6 +243,49 @@ echo "x changed" > "$d/src/x.py"
 git -C "$d" add -A; git -C "$d" commit -qm "change x"
 out=$("$AUDIT" "$d")
 got=$(printf '%s' "$out" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 && echo valid); check "identity_lines_valid_utf8" "valid" "$got"
+rm -rf "$d"
+
+# 19: a root doc that names a changed directory anywhere (no backticks) gets staleness
+d=$(new_repo)
+printf '# Project\n\n```\nvoice-agent/   # python agent\n```\n' > "$d/CLAUDE.md"
+mkdir -p "$d/voice-agent"; echo v1 > "$d/voice-agent/agent.py"
+git -C "$d" add -A; git -C "$d" commit -qm init
+echo v2 > "$d/voice-agent/agent.py"
+git -C "$d" add -A; git -C "$d" commit -qm "change agent"
+out=$("$AUDIT" "$d")
+got=$(count "$out" '"type":"staleness_pressure"'); check "mentioned_dir_staleness" "1" "$got"
+rm -rf "$d"
+
+# 20: generic names (src, index.ts) mentioned in prose do not widen the scope
+d=$(new_repo)
+printf '# Project\n\nCode lives in src and starts at index.ts.\n' > "$d/CLAUDE.md"
+mkdir -p "$d/src"; echo v1 > "$d/src/index.ts"
+git -C "$d" add -A; git -C "$d" commit -qm init
+echo v2 > "$d/src/index.ts"
+git -C "$d" add -A; git -C "$d" commit -qm "change index"
+out=$("$AUDIT" "$d")
+got=$(empty_findings "$out" && echo yes); check "generic_mentions_ignored" "yes" "$got"
+rm -rf "$d"
+
+# 21: staleness finding carries open placeholder lines
+d=$(new_repo)
+printf '# P\n\nTODO: document the `api/` commands once scaffolded.\n' > "$d/CLAUDE.md"
+mkdir -p "$d/api"; echo v1 > "$d/api/main.go"
+git -C "$d" add -A; git -C "$d" commit -qm init
+echo v2 > "$d/api/main.go"
+git -C "$d" add -A; git -C "$d" commit -qm "change api"
+out=$("$AUDIT" "$d")
+got=$(count "$out" '3: TODO: document'); check "open_marker_lines" "1" "$got"
+rm -rf "$d"
+
+# 22: a root product README is not a state doc; a skill's README is
+d=$(new_repo)
+printf '# App\n\nSee `gone/file.md`.\n' > "$d/README.md"
+out=$("$AUDIT" "$d")
+got=$(field "$out" documents_scanned); check "root_product_readme_skipped" "0" "$got"
+printf -- '---\nname: s\n---\n' > "$d/SKILL.md"
+out=$("$AUDIT" "$d")
+got=$(field "$out" documents_scanned); check "skill_readme_scanned" "1" "$got"
 rm -rf "$d"
 
 echo ""

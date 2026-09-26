@@ -42,8 +42,10 @@ find_doc_files() {
     find "$ROOT" \( "${prune[@]}" \) -prune -o -type f \( -iname "CLAUDE.md" -o -iname "AGENTS.md" -o -iname "PLAN.md" -o -iname "system_prompt*" \) -print
     find "$ROOT" \( "${prune[@]}" \) -prune -o -type f -iname "README.md" -print | while IFS= read -r f; do
       rel="${f#"$ROOT"/}"
+      # only READMEs that document a skill/agent/prompt, not a product README
       case "$rel" in
-        README.md|*/skills/*|*/agents/*|*/prompts/*) printf '%s\n' "$f" ;;
+        skills/*|*/skills/*|agents/*|*/agents/*|prompts/*|*/prompts/*) printf '%s\n' "$f" ;;
+        *) [ -e "${f%/*}/SKILL.md" ] && printf '%s\n' "$f" ;;
       esac
     done
     find "$ROOT" \( "${prune[@]}" \) -prune -o -type f -ipath "*/prompts/*.md" -print
@@ -163,6 +165,37 @@ extract_candidates() {
       }
     }
   '
+}
+
+# stdin lines -> JSON array of strings
+json_array() {
+  local ln e out="[" first=1
+  while IFS= read -r ln; do
+    [ -z "$ln" ] && continue
+    [ "$first" -eq 0 ] && out="${out},"
+    e=$(json_escape "$ln"); out="${out}\"${e}\""; first=0
+  done
+  printf '%s]' "$out"
+}
+
+# grep -n output -> "N: text", byte-truncated and cleaned back to valid UTF-8
+doc_lines() {
+  cut -b1-160 | iconv -c -f UTF-8 -t UTF-8 | sed -E 's/^([0-9]+):/\1: /'
+}
+
+# changed paths on stdin whose top-level dir, 2-level prefix or file name the
+# doc ($1) names anywhere; generic names are skipped so prose like src is noise-free
+mentioned_changed() {
+  awk -v gen=' src lib app apps docs doc test tests scripts public components packages assets static bin ' \
+      -v genb=' index.ts index.tsx index.js index.jsx page.tsx layout.tsx route.ts __init__.py README.md main.py package.json ' '
+    NR == FNR { doc = doc $0 "\n"; next }
+    $0 == "" { next }
+    {
+      n = split($0, seg, "/")
+      if (n > 1 && length(seg[1]) >= 4 && index(gen, " " seg[1] " ") == 0 && index(doc, seg[1])) { print; next }
+      if (n > 2 && index(doc, seg[1] "/" seg[2])) { print; next }
+      if (seg[n] ~ /[.]/ && length(seg[n]) >= 6 && index(genb, " " seg[n] " ") == 0 && index(doc, seg[n])) print
+    }' "$1" -
 }
 
 # --- header field detection ---------------------------------------------
@@ -295,46 +328,34 @@ check_file() {
     fi
   fi
 
-  # staleness pressure: scoped to referenced paths that exist; skip if doc is dirty
+  # staleness pressure: scoped to the paths the doc names (referenced paths that
+  # exist, plus changed paths it mentions anywhere); skip if doc is dirty
   if [ "$IS_GIT_REPO" = "true" ] && [ -n "$sha" ]; then
     local dirty; dirty=$(git -C "$ROOT" status --porcelain -- "$file" 2>/dev/null)
     if [ -z "$dirty" ]; then
       local -a scope=()
-      if [ -n "$existing_list" ]; then
-        local uniq_existing; uniq_existing=$(sort -u <<< "$existing_list")
-        while IFS= read -r p; do [ -n "$p" ] && scope+=("$p"); done <<< "$uniq_existing"
-      else
-        local parent_rel; parent_rel=$(dirname "$rel")
-        [ "$parent_rel" != "." ] && scope=("$parent_rel")
+      local changed mentioned uniq_scope parent_rel
+      changed=$(git -C "$ROOT" diff --name-only "$sha" HEAD 2>/dev/null)
+      mentioned=$(mentioned_changed "$file" <<< "$changed")
+      parent_rel=""
+      if [ -z "$existing_list" ]; then
+        parent_rel=$(dirname "$rel"); [ "$parent_rel" = "." ] && parent_rel=""
       fi
+      uniq_scope=$(printf '%s\n%s\n%s\n' "$existing_list" "$mentioned" "$parent_rel" | sort -u)
+      while IFS= read -r p; do [ -n "$p" ] && scope+=("$p"); done <<< "$uniq_scope"
       if [ "${#scope[@]}" -gt 0 ]; then
         local commits_since
         commits_since=$(git -C "$ROOT" rev-list --count "${sha}..HEAD" -- "${scope[@]}" 2>/dev/null)
         if [ -n "$commits_since" ] && [ "$commits_since" -gt 0 ] 2>/dev/null; then
-          local recent recent_json="[" first=1 ln e_ln e_date
-          recent=$(git -C "$ROOT" log --oneline "${sha}..HEAD" -5 -- "${scope[@]}" 2>/dev/null)
-          while IFS= read -r ln; do
-            [ -z "$ln" ] && continue
-            [ "$first" -eq 0 ] && recent_json="${recent_json},"
-            e_ln=$(json_escape "$ln")
-            recent_json="${recent_json}\"${e_ln}\""
-            first=0
-          done <<< "$recent"
-          recent_json="${recent_json}]"
+          local recent_json id_json marker_json e_date
+          recent_json=$(git -C "$ROOT" log --oneline "${sha}..HEAD" -5 -- "${scope[@]}" 2>/dev/null | json_array)
           e_date=$(json_escape "$last_date")
-          # the doc's own identity lines: H1 title, URLs, version-like numbers
-          local id_lines id_json="[" id_first=1
-          id_lines=$(grep -nE '^#[[:space:]]|https?://|[0-9]+[.][0-9]+' "$file" | head -10 | cut -b1-160 | iconv -c -f UTF-8 -t UTF-8 | sed -E 's/^([0-9]+):/\1: /')
-          while IFS= read -r ln; do
-            [ -z "$ln" ] && continue
-            [ "$id_first" -eq 0 ] && id_json="${id_json},"
-            e_ln=$(json_escape "$ln")
-            id_json="${id_json}\"${e_ln}\""
-            id_first=0
-          done <<< "$id_lines"
-          id_json="${id_json}]"
-          printf '{"type":"staleness_pressure","directly_verified":false,"doc_last_commit_date":"%s","commits_since_in_same_dir":%s,"sample_recent_commits":%s,"identity":{"manifest":"%s","manifest_name":"%s","manifest_version":"%s","remote":"%s","doc_lines":%s}}\n' \
-            "$e_date" "$commits_since" "$recent_json" "$E_MANIFEST" "$E_M_NAME" "$E_M_VERSION" "$E_REMOTE" "$id_json" >> "$FINDINGS_OUT"
+          # the doc's own identity lines (H1 title, URLs, version-like numbers) and
+          # open markers (promises the work may have fulfilled since)
+          id_json=$(grep -nE '^#[[:space:]]|https?://|[0-9]+[.][0-9]+' "$file" | head -10 | doc_lines | json_array)
+          marker_json=$(grep -niE 'TODO|TBD|to be (filled|done|decided|added)|coming soon|em breve|pendente|a definir|por fazer' "$file" | head -5 | doc_lines | json_array)
+          printf '{"type":"staleness_pressure","directly_verified":false,"doc_last_commit_date":"%s","commits_since_in_same_dir":%s,"sample_recent_commits":%s,"identity":{"manifest":"%s","manifest_name":"%s","manifest_version":"%s","remote":"%s","doc_lines":%s},"open_markers":%s}\n' \
+            "$e_date" "$commits_since" "$recent_json" "$E_MANIFEST" "$E_M_NAME" "$E_M_VERSION" "$E_REMOTE" "$id_json" "$marker_json" >> "$FINDINGS_OUT"
         fi
       fi
     fi
