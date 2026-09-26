@@ -18,6 +18,10 @@ It never rewrites docs outright and never invents what changed. A deterministic 
 - Never commits or pushes on your behalf.
 - Never flags stylistic differences or intentionally-open roadmap items — only factual mismatches with the current repo state.
 
+## Known limit
+
+It checks paths, links, handoff headers, staleness and identity (name/version/URL) deterministically, then judges only what those checks point at — it does not read every doc end to end. Prose claims about features or setup (e.g. "password reset, if available", "`/content` is a git submodule") can slip through. On a hand-verified benchmark — the same 3 repos (2 runs each) used while developing these checks, so an in-sample figure — it found 82% of the real drift that an unrestricted Claude Code audit found, at about one sixth of the cost per real finding.
+
 ## Modes
 
 - **Review mode (default).** Reports findings with diffs; nothing is written until you approve each one.
@@ -25,7 +29,7 @@ It never rewrites docs outright and never invents what changed. A deterministic 
 
 ## Requirements
 
-- `git`, `bash`, `awk`, `grep`, `sed` — all standard on macOS and Linux. No Python, no other runtime dependency.
+- `git`, `bash`, `awk`, `grep`, `sed`, `iconv` — all standard on macOS and Linux. No Python, no other runtime dependency.
 - A git repository. Outside a git repo, path-history and staleness checks are skipped and the report says so.
 
 ## Installation

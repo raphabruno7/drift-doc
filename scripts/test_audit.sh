@@ -191,6 +191,50 @@ out=$("$AUDIT" "$d")
 got=$(empty_findings "$out" && echo yes); check "md_link_urls_ignored" "yes" "$got"
 rm -rf "$d"
 
+# 15: markdown link to a file that never existed is a finding
+d=$(new_repo)
+printf 'Status: done\nOwner: x\nLast updated: 2020-01-01\n\n![shot](./docs/assets/shot.png)\n' > "$d/PLAN.md"
+git -C "$d" add -A; git -C "$d" commit -qm plan
+out=$("$AUDIT" "$d")
+got=$(field "$out" old_text); check "md_link_never_tracked" "./docs/assets/shot.png" "$got"
+got=$(count "$out" 'never tracked'); check "md_link_never_tracked_evidence" "1" "$got"
+rm -rf "$d"
+
+# 16: never-tracked backtick paths and extensionless link targets stay silent
+d=$(new_repo)
+printf 'Status: done\nOwner: x\nLast updated: 2020-01-01\n\nExample `lib/foo.py`. Open [the dashboard](/dashboard).\n' > "$d/PLAN.md"
+git -C "$d" add -A; git -C "$d" commit -qm plan
+out=$("$AUDIT" "$d")
+got=$(empty_findings "$out" && echo yes); check "never_tracked_code_and_routes_ignored" "yes" "$got"
+rm -rf "$d"
+
+# 17: staleness finding carries manifest identity and the doc's identity lines
+d=$(new_repo)
+printf '{\n  "name": "new-name",\n  "version": "2.0.0"\n}\n' > "$d/package.json"
+printf '# old-name\n\nVersion 1.0. Code in `src/x.py`.\n' > "$d/CLAUDE.md"
+mkdir -p "$d/src"; echo x > "$d/src/x.py"
+git -C "$d" add -A; git -C "$d" commit -qm init
+echo "x changed" > "$d/src/x.py"
+git -C "$d" add -A; git -C "$d" commit -qm "change x"
+out=$("$AUDIT" "$d")
+got=$(field "$out" manifest_name); check "identity_manifest_name" "new-name" "$got"
+got=$(field "$out" manifest_version); check "identity_manifest_version" "2.0.0" "$got"
+got=$(count "$out" '1: # old-name'); check "identity_doc_title_line" "1" "$got"
+rm -rf "$d"
+
+# 18: truncated identity lines stay valid UTF-8 even when the cut lands mid-character
+d=$(new_repo)
+printf '{\n  "name": "n",\n  "version": "1.0.0"\n}\n' > "$d/package.json"
+long=$(printf 'ação%.0s' $(seq 1 60))
+printf '# t\n\nVersão 1.0 %s\n\nCode in `src/x.py`.\n' "$long" > "$d/CLAUDE.md"
+mkdir -p "$d/src"; echo x > "$d/src/x.py"
+git -C "$d" add -A; git -C "$d" commit -qm init
+echo "x changed" > "$d/src/x.py"
+git -C "$d" add -A; git -C "$d" commit -qm "change x"
+out=$("$AUDIT" "$d")
+got=$(printf '%s' "$out" | iconv -f UTF-8 -t UTF-8 >/dev/null 2>&1 && echo valid); check "identity_lines_valid_utf8" "valid" "$got"
+rm -rf "$d"
+
 echo ""
 TOTAL=$((PASS + FAIL))
 echo "$PASS/$TOTAL passed"

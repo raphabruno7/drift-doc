@@ -53,6 +53,20 @@ find_doc_files() {
   done | awk -F'\t' '!seen[$1]++ {print $2}' | sort
 }
 
+# --- repo identity (built once), attached to staleness findings ---------
+# First manifest found at the root; name/version via grep+sed, no jq.
+MANIFEST="" M_NAME="" M_VERSION="" REMOTE=""
+for m in package.json pyproject.toml Cargo.toml; do
+  [ -f "$ROOT/$m" ] || continue
+  MANIFEST=$m
+  M_NAME=$(grep -m1 -E '^[[:space:]]*"?name"?[[:space:]]*[:=]' "$ROOT/$m" | sed -E 's/^[^:=]*[:=][[:space:]]*"?([^",]*)"?.*/\1/')
+  M_VERSION=$(grep -m1 -E '^[[:space:]]*"?version"?[[:space:]]*[:=]' "$ROOT/$m" | sed -E 's/^[^:=]*[:=][[:space:]]*"?([^",]*)"?.*/\1/')
+  break
+done
+[ "$IS_GIT_REPO" = "true" ] && REMOTE=$(git -C "$ROOT" remote get-url origin 2>/dev/null)
+E_MANIFEST=$(json_escape "$MANIFEST"); E_M_NAME=$(json_escape "$M_NAME")
+E_M_VERSION=$(json_escape "$M_VERSION"); E_REMOTE=$(json_escape "$REMOTE")
+
 # --- rename map (built once, whole repo) --------------------------------
 RENAME_MAP="$TMPDIR_DD/renames.tsv"
 : > "$RENAME_MAP"
@@ -104,10 +118,10 @@ path_history() {
 
 # --- per-line candidate extraction (awk: first occurrence + context) ---
 extract_candidates() {
-  # stdin = file content; emits tok\tline\tcontext(\001-joined, POSIX octal not hex — mawk lacks \x) for path-shaped
+  # stdin = file content; emits tok\tline\tkind\tcontext(kind = code or link; context \001-joined, POSIX octal not hex — mawk lacks \x) for path-shaped
   # backtick tokens and markdown link targets that are not URLs and not glob patterns.
   awk '
-    function consider(tok, i) {
+    function consider(tok, i, k) {
       if (tok ~ /^https?:\/\//) return
       if (tok ~ /[*?\[]/) return
       if (!(tok ~ /\// || tok ~ /\.[A-Za-z0-9_]+$/)) return
@@ -115,6 +129,7 @@ extract_candidates() {
       seen[tok] = 1
       order[++cnt] = tok
       linenum[tok] = i
+      kind[tok] = k
     }
     { lines[NR] = $0 }
     END {
@@ -122,7 +137,7 @@ extract_candidates() {
       for (i = 1; i <= n; i++) {
         s = lines[i]
         while (match(s, /`[^`[:space:]]+`/)) {
-          consider(substr(s, RSTART + 1, RLENGTH - 2), i)
+          consider(substr(s, RSTART + 1, RLENGTH - 2), i, "code")
           s = substr(s, RSTART + RLENGTH)
         }
         # markdown link/image targets: ](target) — fragment dropped, schemes skipped
@@ -132,7 +147,7 @@ extract_candidates() {
           s = substr(s, RSTART + RLENGTH)
           sub(/#.*/, "", tok)
           if (tok == "" || tok ~ /^[A-Za-z][A-Za-z0-9+.-]*:/) continue
-          consider(tok, i)
+          consider(tok, i, "link")
         }
       }
       for (k = 1; k <= cnt; k++) {
@@ -144,7 +159,7 @@ extract_candidates() {
           ctx = ctx lines[j]
           if (j < hi) ctx = ctx "\001"
         }
-        printf "%s\t%d\t%s\n", tok, ln, ctx
+        printf "%s\t%d\t%s\t%s\n", tok, ln, kind[tok], ctx
       }
     }
   '
@@ -185,30 +200,35 @@ check_file() {
   candidates_raw=$(extract_candidates < "$file")
 
   local doc_dir; doc_dir=$(dirname "$file")
-  local line ctx_raw ctx tok p pre
+  local line ctx_raw ctx tok p pre kind
   # p = tok with a leading ./ or / removed, the form git and the filesystem
   # accept; tok itself stays verbatim as old_text so the diff matches the doc.
-  while IFS=$'\t' read -r tok line ctx_raw; do
+  while IFS=$'\t' read -r tok line kind ctx_raw; do
     [ -z "$tok" ] && continue
     p=${tok#./}; p=${p#/}
     if [ -e "$doc_dir/$p" ] || [ -e "$ROOT/$p" ]; then
       existing_list="${existing_list}${p}"$'\n'
     else
-      missing_list="${missing_list}${tok}"$'\t'"${line}"$'\t'"${ctx_raw}"$'\n'
+      missing_list="${missing_list}${tok}"$'\t'"${line}"$'\t'"${kind}"$'\t'"${ctx_raw}"$'\n'
     fi
   done <<< "$candidates_raw"
 
   # missing paths -> git history classification
   if [ "$IS_GIT_REPO" = "true" ] && [ -n "$missing_list" ]; then
-    while IFS=$'\t' read -r tok line ctx_raw; do
+    while IFS=$'\t' read -r tok line kind ctx_raw; do
       [ -z "$tok" ] && continue
       ctx=$(tr '\001' '\n' <<< "$ctx_raw")
-      local kind data1 data2 hist_line e_tok e_new e_ctx e_ev
+      local hkind data1 data2 hist_line e_tok e_new e_ctx e_ev
       p=${tok#./}; p=${p#/}; pre=${tok%"$p"}
       hist_line=$(path_history "$p")
-      IFS=$'\t' read -r kind data1 data2 <<< "$hist_line"
+      IFS=$'\t' read -r hkind data1 data2 <<< "$hist_line"
       e_tok=$(json_escape "$tok"); e_ctx=$(json_escape "$ctx")
-      case "$kind" in
+      # a link target that never existed is still a broken link; a never-tracked
+      # backtick token or extensionless link is usually an example or a site route
+      if [ "$hkind" = "none" ] && [ "$kind" = "link" ]; then
+        case "${p##*/}" in *.*) hkind="never_tracked" ;; esac
+      fi
+      case "$hkind" in
         renamed)
           e_new=$(json_escape "$pre$data1"); e_ev=$(json_escape "git-confirmed rename to $data1")
           printf '{"type":"missing_path","directly_verified":true,"old_text":"%s","replacement_text":"%s","line":%s,"context":"%s","evidence":"%s"}\n' \
@@ -218,6 +238,10 @@ check_file() {
           printf -v e_ev 'deleted in %s (%s)' "$data1" "$data2"; e_ev=$(json_escape "$e_ev")
           printf '{"type":"missing_path","directly_verified":false,"old_text":"%s","replacement_text":null,"line":%s,"context":"%s","evidence":"%s"}\n' \
             "$e_tok" "$line" "$e_ctx" "$e_ev" >> "$FINDINGS_OUT"
+          ;;
+        never_tracked)
+          printf '{"type":"missing_path","directly_verified":false,"old_text":"%s","replacement_text":null,"line":%s,"context":"%s","evidence":"link target not in repo and never tracked"}\n' \
+            "$e_tok" "$line" "$e_ctx" >> "$FINDINGS_OUT"
           ;;
         *) : ;;  # never tracked -> not a real path reference, drop silently
       esac
@@ -298,8 +322,19 @@ check_file() {
           done <<< "$recent"
           recent_json="${recent_json}]"
           e_date=$(json_escape "$last_date")
-          printf '{"type":"staleness_pressure","directly_verified":false,"doc_last_commit_date":"%s","commits_since_in_same_dir":%s,"sample_recent_commits":%s}\n' \
-            "$e_date" "$commits_since" "$recent_json" >> "$FINDINGS_OUT"
+          # the doc's own identity lines: H1 title, URLs, version-like numbers
+          local id_lines id_json="[" id_first=1
+          id_lines=$(grep -nE '^#[[:space:]]|https?://|[0-9]+[.][0-9]+' "$file" | head -10 | cut -b1-160 | iconv -c -f UTF-8 -t UTF-8 | sed -E 's/^([0-9]+):/\1: /')
+          while IFS= read -r ln; do
+            [ -z "$ln" ] && continue
+            [ "$id_first" -eq 0 ] && id_json="${id_json},"
+            e_ln=$(json_escape "$ln")
+            id_json="${id_json}\"${e_ln}\""
+            id_first=0
+          done <<< "$id_lines"
+          id_json="${id_json}]"
+          printf '{"type":"staleness_pressure","directly_verified":false,"doc_last_commit_date":"%s","commits_since_in_same_dir":%s,"sample_recent_commits":%s,"identity":{"manifest":"%s","manifest_name":"%s","manifest_version":"%s","remote":"%s","doc_lines":%s}}\n' \
+            "$e_date" "$commits_since" "$recent_json" "$E_MANIFEST" "$E_M_NAME" "$E_M_VERSION" "$E_REMOTE" "$id_json" >> "$FINDINGS_OUT"
         fi
       fi
     fi
